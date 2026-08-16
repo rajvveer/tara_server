@@ -1,0 +1,351 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum GoalCategory {
+  HEALTH
+  LEARNING
+  CAREER
+  PERSONAL
+  FINANCE
+  RELATIONSHIPS
+  PRODUCTIVITY
+  CUSTOM
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum GoalStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+enum MilestoneStatus {
+  UPCOMING
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum ActionStatus {
+  UPCOMING
+  IN_PROGRESS
+  COMPLETED
+  MISSED
+  SKIPPED
+}
+
+enum Frequency {
+  ONCE
+  DAILY
+  WEEKLY
+  MONTHLY
+  CUSTOM
+}
+
+enum ProgressStyle {
+  GENTLE
+  BALANCED
+  DETAILED
+}
+
+enum NotificationType {
+  ACTION_REMINDER
+  DUE_ACTION
+  MILESTONE
+  PROGRESS_SUMMARY
+  WEEKLY_REFLECTION
+  SYSTEM
+}
+
+model User {
+  id                  String                  @id @default(cuid())
+  name                String
+  email               String                  @unique
+  passwordHash        String?
+  googleSubject       String?                 @unique
+    appleSubject        String?                 @unique
+    profileImageUrl     String?
+    avatarKey           String                  @default("neutral-violet-navy")
+    timezone            String                  @default("UTC")
+  mainObjective       String?
+  onboardingCompleted Boolean                 @default(false)
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+  goals               Goal[]
+  milestones          Milestone[]
+  actions             Action[]
+  routines            Routine[]
+  progressRecords     ProgressRecord[]
+  reflections         Reflection[]
+  notifications       Notification[]
+  analyticsEvents     AnalyticsEvent[]
+  sessions            Session[]
+  passwordResetTokens PasswordResetToken[]
+  preferences         UserPreference?
+  notificationPrefs   NotificationPreference?
+  pushDevices         PushDevice[]
+}
+
+model UserPreference {
+  id                  String        @id @default(cuid())
+  userId              String        @unique
+  preferredDays       String[]
+  preferredTime       String?
+  workingFrequency    Int           @default(3)
+  personalConstraints String?
+  progressStyle       ProgressStyle @default(BALANCED)
+  weekStartsOn        Int           @default(1)
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+  user                User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Goal {
+  id              String           @id @default(cuid())
+  userId          String
+  title           String
+  description     String?
+  whyItMatters    String?
+  category        GoalCategory
+  customCategory  String?
+  priority        Priority         @default(MEDIUM)
+  status          GoalStatus       @default(ACTIVE)
+  startDate       DateTime
+  targetDate      DateTime?
+  frequency       Frequency        @default(WEEKLY)
+  preferredDays   String[]
+  preferredTime   String?
+  weeklyTarget    Int              @default(3)
+  metricUnit      String?
+  metricTarget    Float?
+  metricCurrent   Float            @default(0)
+  remindersEnabled Boolean         @default(true)
+  color           String?
+  icon            String?
+  completedAt     DateTime?
+  deletedAt       DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  milestones      Milestone[]
+  actions         Action[]
+  routines        Routine[]
+  progressRecords ProgressRecord[]
+
+  @@index([userId, status])
+  @@index([userId, targetDate])
+}
+
+model Milestone {
+  id          String          @id @default(cuid())
+  userId      String
+  goalId      String
+  title       String
+  description String?
+  targetDate  DateTime?
+  status      MilestoneStatus @default(UPCOMING)
+  position    Int             @default(0)
+  completedAt DateTime?
+  deletedAt   DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  goal        Goal            @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  actions     Action[]
+
+  @@index([goalId, position])
+  @@index([userId])
+}
+
+model Action {
+  id               String           @id @default(cuid())
+  userId           String
+  goalId           String
+  milestoneId      String?
+  routineId        String?
+  title            String
+  description      String?
+  status           ActionStatus     @default(UPCOMING)
+  priority         Priority         @default(MEDIUM)
+  scheduledFor     DateTime?
+  dueDate          DateTime?
+  preferredTime    String?
+  estimatedMinutes Int?
+  difficulty       Int              @default(2)
+  frequency        Frequency        @default(ONCE)
+  reminderEnabled  Boolean          @default(true)
+  completedAt      DateTime?
+  skippedAt        DateTime?
+  deletedAt        DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  user             User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  goal             Goal             @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  milestone        Milestone?       @relation(fields: [milestoneId], references: [id], onDelete: SetNull)
+  routine          Routine?         @relation(fields: [routineId], references: [id], onDelete: SetNull)
+  progressRecords  ProgressRecord[]
+
+  @@index([userId, scheduledFor])
+  @@index([userId, status])
+  @@index([goalId, status])
+  @@index([milestoneId])
+  @@index([routineId])
+  @@unique([routineId, scheduledFor])
+}
+
+model Routine {
+  id              String    @id @default(cuid())
+  userId          String
+  goalId          String
+  name            String?
+  frequency       Frequency
+  days            String[]
+  preferredTime   String?
+  durationMinutes Int?
+  timesPerWeek    Int?
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  goal            Goal      @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  actions         Action[]
+
+  @@index([userId, isActive])
+  @@index([goalId])
+}
+
+model ProgressRecord {
+  id         String       @id @default(cuid())
+  userId     String
+  goalId     String
+  actionId   String?
+  status     ActionStatus
+  occurredAt DateTime     @default(now())
+  value      Float?
+  note       String?
+  createdAt  DateTime     @default(now())
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  goal       Goal         @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  action     Action?      @relation(fields: [actionId], references: [id], onDelete: SetNull)
+
+  @@index([userId, occurredAt])
+  @@index([goalId, occurredAt])
+  @@index([actionId])
+}
+
+model Reflection {
+  id               String   @id @default(cuid())
+  userId           String
+  periodStart      DateTime
+  periodEnd        DateTime
+  whatWentWell     String?
+  whatWasDifficult String?
+  nextFocus        String?
+  mood             Int?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, periodStart, periodEnd])
+  @@index([userId, periodStart])
+}
+
+model NotificationPreference {
+  id                    String   @id @default(cuid())
+  userId                String   @unique
+  actionReminders       Boolean  @default(true)
+  dueActionReminders    Boolean  @default(true)
+  milestoneReminders    Boolean  @default(true)
+  progressSummaries     Boolean  @default(true)
+  weeklyReflection      Boolean  @default(true)
+  quietHoursStart       String?
+  quietHoursEnd         String?
+  reminderMinutesBefore Int      @default(30)
+  pushEnabled           Boolean  @default(true)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Notification {
+  id          String           @id @default(cuid())
+  userId      String
+  type        NotificationType
+  title       String
+  body        String
+  data        Json?
+  dedupeKey   String?          @unique
+  scheduledAt DateTime?
+  sentAt      DateTime?
+  readAt      DateTime?
+  createdAt   DateTime         @default(now())
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
+  @@index([scheduledAt, sentAt])
+}
+
+model PushDevice {
+  id         String   @id @default(cuid())
+  userId     String
+  token      String   @unique
+  platform   String
+  deviceName String?
+  enabled    Boolean  @default(true)
+  lastSeenAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, enabled])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  userAgent String?
+  ipAddress String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model AnalyticsEvent {
+  id         String   @id @default(cuid())
+  userId     String?
+  name       String
+  properties Json?
+  createdAt  DateTime @default(now())
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([name, createdAt])
+  @@index([userId, createdAt])
+}
