@@ -1,0 +1,14 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "src/app.ts": {
+      "includeFiles": "node_modules/swagger-ui-dist/**"
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/maintenance",
+      "schedule": "*/5 * * * *"
+    }
+  ]
+}
