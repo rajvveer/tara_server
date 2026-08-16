@@ -29,7 +29,7 @@ const schema = z.object({
   APPLE_ANDROID_PACKAGE: z.string().max(255).regex(/^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/).default("com.intentional.onward"),
 }).superRefine((value, context) => {
   if (value.NODE_ENV !== "production") return;
-  for (const field of ["APP_URL", "RESEND_API_KEY", "RESET_FROM_EMAIL", "SARVAM_API_KEY", "GROQ_API_KEY"] as const) {
+  for (const field of ["APP_URL", "SARVAM_API_KEY", "GROQ_API_KEY"] as const) {
     if (!value[field]) context.addIssue({ code: "custom", path: [field], message: "Required in production" });
   }
 });

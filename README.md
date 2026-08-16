@@ -47,7 +47,7 @@ Demo seed credentials: `demo@onward.app` / `OnwardDemo123!`
 | `APPLE_REDIRECT_URI` | HTTPS return URL used by the Android/web Apple authorization flow |
 | `APPLE_ANDROID_PACKAGE` | Fixed Android application ID used by the Apple callback intent; defaults to `com.intentional.onward` |
 | `APP_URL` | Public HTTPS app URL used in password-reset links |
-| `RESEND_API_KEY`, `RESET_FROM_EMAIL` | Resend credentials for production password-reset delivery |
+| `RESEND_API_KEY`, `RESET_FROM_EMAIL` | Optional Resend credentials for password-reset delivery |
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | Firebase service-account JSON used to deliver queued push notifications through FCM |
 | `FIREBASE_SERVICE_ACCOUNT_FILE` | Local alternative path to the Firebase service-account JSON |
 | `CRON_SECRET` | Random secret used to authorize the Vercel maintenance cron endpoint |
@@ -127,7 +127,7 @@ The callback only hands the response back to the installed app. The app must val
 - Account export uses explicit safe selections and excludes password hashes, sessions, reset tokens, and all token hashes. Account deletion hard-deletes the user and PostgreSQL cascades all owned rows.
 - Goals, milestones, and actions are soft-deleted so history is preserved. Foreign keys and cascade rules protect relational integrity.
 
-Production password resets are sent through Resend. The secure token is exposed only in non-production; production startup requires `APP_URL`, `RESEND_API_KEY`, `RESET_FROM_EMAIL`, `SARVAM_API_KEY`, and `GROQ_API_KEY`.
+Production password resets are sent through Resend when `RESEND_API_KEY` and `RESET_FROM_EMAIL` are configured. Without them, reset emails are disabled. The secure token is exposed only in non-production; production startup requires `APP_URL`, `SARVAM_API_KEY`, and `GROQ_API_KEY`.
 
 ## Analytics and notifications
 
