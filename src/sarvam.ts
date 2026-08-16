@@ -525,19 +525,14 @@ export async function voiceOnboardingTurn(
                   objective: { type: ["string", "null"] },
                   targetDate: { type: ["string", "null"] },
                   preferredDays: {
-                    anyOf: [
-                      { type: "array", items: { type: "string", enum: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] } },
-                      { type: "null" },
-                    ],
+                    type: ["array", "null"],
+                    items: { type: "string", enum: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] },
                   },
                   preferredTime: {
-                    anyOf: [
-                      { type: "string", pattern: "^([01]\\d|2[0-3]):[0-5]\\d$" },
-                      { type: "string", enum: ["Flexible"] },
-                      { type: "null" },
-                    ],
+                    type: ["string", "null"],
+                    pattern: "^(?:([01]\\d|2[0-3]):[0-5]\\d|Flexible)$",
                   },
-                  workingFrequency: { anyOf: [{ type: "integer", minimum: 1, maximum: 7 }, { type: "null" }] },
+                  workingFrequency: { type: ["integer", "null"], minimum: 1, maximum: 7 },
                   progressStyle: { type: ["string", "null"], enum: ["Gentle", "Balanced", "Detailed", null] },
                   constraints: { type: ["string", "null"] },
                 },
