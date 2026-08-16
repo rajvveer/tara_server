@@ -118,20 +118,35 @@ async function sarvam(path: string, init: RequestInit) {
 }
 
 async function groq(init: RequestInit) {
-  let response: Response;
-  try {
-    response = await fetch(`${groqUrl}/chat/completions`, {
-      ...init,
-      headers: { Authorization: `Bearer ${requireGroqKey()}`, ...init.headers },
-      signal: AbortSignal.timeout(35_000),
-    });
-  } catch {
-    throw new ApiError(502, "AI_PROVIDER_UNAVAILABLE", "The onboarding assistant could not be reached. Please try again.");
+  const body = typeof init.body === "string" ? JSON.parse(init.body) as Record<string, unknown> : {};
+  const primaryModel = String(body.model ?? "openai/gpt-oss-120b");
+  let model = primaryModel;
+  let response: Response | undefined;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      response = await fetch(`${groqUrl}/chat/completions`, {
+        ...init,
+        headers: { Authorization: `Bearer ${requireGroqKey()}`, ...init.headers },
+        body: JSON.stringify({ ...body, model }),
+        signal: AbortSignal.timeout(35_000),
+      });
+    } catch {
+      if (attempt < 2) continue;
+      throw new ApiError(502, "AI_PROVIDER_UNAVAILABLE", "The onboarding assistant could not be reached. Please try again.");
+    }
+    if (response.ok) return response;
+    console.warn(JSON.stringify({ level: "warn", message: "Onboarding AI provider request failed", model, status: response.status }));
+    if ((response.status === 429 || response.status >= 500) && model === primaryModel) {
+      model = "openai/gpt-oss-20b";
+      continue;
+    }
+    if (response.status >= 500 && attempt < 2) continue;
+    break;
   }
-  if (!response.ok) {
-    throw new ApiError(502, "AI_PROVIDER_ERROR", "The onboarding assistant could not process that answer. Please try again.");
+  if (response?.status === 429) {
+    throw new ApiError(503, "AI_BUSY", "The onboarding assistant is busy. Please try again in a moment.");
   }
-  return response;
+  throw new ApiError(502, "AI_PROVIDER_ERROR", "The onboarding assistant could not process that answer. Please try again.");
 }
 
 function normalizedLanguage(value?: string | null) {

@@ -291,4 +291,33 @@ describe("voice onboarding providers", () => {
     })).rejects.toMatchObject({ code: "INVALID_AUDIO", status: 422 });
     expect(mockedFetch).not.toHaveBeenCalled();
   });
+
+  it("falls back to the smaller model when the primary model is rate limited", async () => {
+    const mockedFetch = vi.fn()
+      .mockResolvedValueOnce(json({ transcript: "I want to run a 5K", language_code: "en-IN" }))
+      .mockResolvedValueOnce(new Response("", { status: 429 }))
+      .mockResolvedValueOnce(json({
+        choices: [{ message: { content: JSON.stringify({
+          reply: "A first 5K is a great target. When would you like to run it?",
+          answers: {
+            name: "Maya",
+            objective: "run a 5K",
+            targetDate: null,
+            preferredDays: null,
+            preferredTime: null,
+            workingFrequency: null,
+            progressStyle: null,
+            constraints: null,
+          },
+        }) } }],
+      }))
+      .mockResolvedValueOnce(json({ audios: ["UklGRg=="] }));
+    vi.stubGlobal("fetch", mockedFetch);
+
+    const result = await voiceOnboardingTurn({ audioBase64: wav(), mimeType: "audio/wav", answers: { name: "Maya" } });
+
+    expect(result.answers.objective).toBe("run a 5K");
+    const fallbackBody = JSON.parse(String((mockedFetch.mock.calls[2]?.[1] as RequestInit).body));
+    expect(fallbackBody.model).toBe("openai/gpt-oss-20b");
+  });
 });

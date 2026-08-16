@@ -24,15 +24,27 @@ export function queueGoalCreatedNotification(
 }
 
 function messaging() {
-  const credentials = config.FIREBASE_SERVICE_ACCOUNT_JSON
-    || (config.FIREBASE_SERVICE_ACCOUNT_FILE ? readFileSync(config.FIREBASE_SERVICE_ACCOUNT_FILE, "utf8") : "");
-  if (!credentials) return null;
-  if (!getApps().length) {
-    const account = JSON.parse(credentials) as Record<string, string>;
-    if (account.private_key) account.private_key = account.private_key.replace(/\\n/g, "\n");
-    initializeApp({ credential: cert(account) });
+  let credentials = config.FIREBASE_SERVICE_ACCOUNT_JSON;
+  if (!credentials && config.FIREBASE_SERVICE_ACCOUNT_FILE) {
+    try {
+      credentials = readFileSync(config.FIREBASE_SERVICE_ACCOUNT_FILE, "utf8");
+    } catch (error) {
+      console.warn(JSON.stringify({ level: "warn", message: "Push notifications disabled: Firebase credential file is unavailable", error: error instanceof Error ? error.message : String(error) }));
+      return null;
+    }
   }
-  return getMessaging();
+  if (!credentials) return null;
+  try {
+    if (!getApps().length) {
+      const account = JSON.parse(credentials) as Record<string, string>;
+      if (account.private_key) account.private_key = account.private_key.replace(/\\n/g, "\n");
+      initializeApp({ credential: cert(account) });
+    }
+    return getMessaging();
+  } catch (error) {
+    console.warn(JSON.stringify({ level: "warn", message: "Push notifications disabled: Firebase credentials are invalid", error: error instanceof Error ? error.message : String(error) }));
+    return null;
+  }
 }
 
 function stringData(data: Prisma.JsonValue | null) {
@@ -90,11 +102,17 @@ export async function dispatchDueNotifications(now = new Date()) {
     }
     const tokens = notification.user.pushDevices.map((device) => device.token);
     if (!tokens.length) continue;
-    const result = await client.sendEachForMulticast({
-      tokens,
-      notification: { title: notification.title, body: notification.body },
-      data: { notificationId: notification.id, type: notification.type, ...stringData(notification.data) },
-    });
+    let result;
+    try {
+      result = await client.sendEachForMulticast({
+        tokens,
+        notification: { title: notification.title, body: notification.body },
+        data: { notificationId: notification.id, type: notification.type, ...stringData(notification.data) },
+      });
+    } catch (error) {
+      console.warn(JSON.stringify({ level: "warn", message: "Push notification delivery failed", notificationId: notification.id, error: error instanceof Error ? error.message : String(error) }));
+      continue;
+    }
     const invalid = result.responses.flatMap((item, index) => {
       const code = item.error?.code ?? "";
       return code.includes("registration-token-not-registered") || code.includes("invalid-registration-token") ? [tokens[index]!] : [];
