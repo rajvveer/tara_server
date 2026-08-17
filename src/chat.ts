@@ -132,7 +132,7 @@ async function streamCompletion(
         body: JSON.stringify({
           model,
           temperature: 0.35,
-          max_completion_tokens: 700,
+          max_completion_tokens: emptyRetries > 0 ? 700 : 1_400,
           reasoning_effort: "low",
           stream: true,
           messages,

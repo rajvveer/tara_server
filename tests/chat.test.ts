@@ -253,6 +253,10 @@ describe("personalized coach", () => {
       history: [],
     }, () => undefined)).resolves.toBe("Let’s take one small step.");
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    const firstBody = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    const retryBody = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body));
+    expect(firstBody.max_completion_tokens).toBe(700);
+    expect(retryBody.max_completion_tokens).toBe(1_400);
   });
 
   it("executes streamed tool calls and reports data changes", async () => {
