@@ -337,6 +337,7 @@ describe("personalized coach", () => {
     );
     const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
     expect(body.tool_choice).toBe("required");
+    expect(body.max_completion_tokens).toBe(2_000);
     expect(body.tools.map((tool: { function: { name: string } }) => tool.function.name)).toEqual(["create_goal"]);
     expect(fetchMock).toHaveBeenCalledOnce();
   });
