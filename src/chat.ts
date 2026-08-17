@@ -54,10 +54,13 @@ function hasGoalTime(input: ChatTurn) {
   return /\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\b(?:morning|afternoon|evening|night|flexible|any\s*time|no\s*preference|subah|dopahar|shaam|raat|baje)\b/iu.test(userText);
 }
 
-function needsGoalTime(input: ChatTurn) {
+function hasGoalCreationIntent(input: ChatTurn) {
   const conversation = [...input.history.map((message) => message.content), input.message].join("\n");
-  return /\b(?:create|add|new|set up)\b[\s\S]{0,100}\bgoal\b|\bgoal\b[\s\S]{0,100}\b(?:create|add|set up)\b/iu.test(conversation)
-    && !hasGoalTime(input);
+  return /\b(?:create|add|new|set up)\b[\s\S]{0,100}\bgoal\b|\bgoal\b[\s\S]{0,100}\b(?:create|add|set up)\b/iu.test(conversation);
+}
+
+function needsGoalTime(input: ChatTurn) {
+  return hasGoalCreationIntent(input) && !hasGoalTime(input);
 }
 
 function confirmedGoalCreation(input: ChatTurn) {
@@ -400,6 +403,12 @@ export async function streamCoachReply(
     return reply;
   }
 
+  const confirmedGoal = confirmedGoalCreation(input);
+  if (hasGoalCreationIntent(input) && hasGoalTime(input) && !confirmedGoal) {
+    const reply = "Sounds good. Just to confirm, should I create this goal using the details and schedule you provided?";
+    onDelta(reply);
+    return reply;
+  }
   const missingGoalTime = needsGoalTime(input);
   const messages: GroqMessage[] = [
     {
@@ -420,7 +429,6 @@ Use the supplied tools whenever the user asks to view or change goals, tasks, pr
     { role: "user", content: input.message },
   ];
 
-  const confirmedGoal = confirmedGoalCreation(input);
   const directEnglishTaskList = wantsEnglishTaskList(input.message);
   let conversation = messages;
   let availableTools: readonly CoachTool[] | null = confirmedGoal

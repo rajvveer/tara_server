@@ -342,6 +342,23 @@ describe("personalized coach", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
+  it("confirms a new goal instead of letting the provider reject supported creation", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const reply = await streamCoachReply("user-1", {
+      message: "I want to lose weight in 3 weeks my timing would be in morning",
+      history: [
+        { role: "user", content: "Create a new goal" },
+        { role: "assistant", content: "What time of day would you like to work on it?" },
+      ],
+    }, () => undefined);
+
+    expect(reply).toContain("should I create this goal");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.executeTool).not.toHaveBeenCalled();
+  });
+
   it("keeps a clear English task-list answer in English", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(new Response([
       'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-list","function":{"name":"list_tasks","arguments":"{\\"scope\\":\\"ALL\\",\\"status\\":\\"OPEN\\"}"}}]}}]}',
