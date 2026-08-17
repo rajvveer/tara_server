@@ -5,8 +5,8 @@ import { verifyAccessToken } from "./auth.js";
 import { chatTurnSchema, streamCoachReply } from "./chat.js";
 import { isAllowedOrigin } from "./config.js";
 import { ApiError } from "./errors.js";
-import { startVoiceOnboarding, voiceOnboardingTurn } from "./sarvam.js";
-import { voiceStartSchema, voiceTurnSchema } from "./schemas.js";
+import { skipVoiceOnboardingQuestion, startVoiceOnboarding, voiceOnboardingTurn } from "./sarvam.js";
+import { voiceSkipSchema, voiceStartSchema, voiceTurnSchema } from "./schemas.js";
 
 const envelopeSchema = z.object({
   type: z.string().trim().min(1).max(50),
@@ -72,6 +72,7 @@ export function attachRealtime(server: HttpServer) {
             send(socket, "voice.reply", {
               ...opening,
               answers: {},
+              questionField: "objective",
               complete: false,
             });
           } else if (message.type === "voice.turn") {
@@ -85,6 +86,9 @@ export function attachRealtime(server: HttpServer) {
               }
             });
             send(socket, "voice.reply", result);
+          } else if (message.type === "voice.skip") {
+            send(socket, "voice.status", { stage: "thinking" });
+            send(socket, "voice.reply", await skipVoiceOnboardingQuestion(voiceSkipSchema.parse(message.data)));
           } else if (message.type === "chat.message") {
             const input = chatTurnSchema.parse(message.data);
             send(socket, "chat.start");

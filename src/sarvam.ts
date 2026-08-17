@@ -26,6 +26,8 @@ const ttsSpeakers: Record<string, string> = {
   "gu-IN": "priya",
 };
 const dayOrder = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
+const requiredFields = ["objective", "targetDate", "preferredDays", "preferredTime", "progressStyle"] as const;
+export type VoiceQuestionField = typeof requiredFields[number];
 
 const assistantOutputSchema = z.object({
   reply: z.string().trim().min(1).max(700),
@@ -432,16 +434,16 @@ function askedField(reply: string): keyof VoiceAnswers | null {
   return null;
 }
 
-function needsReplyRepair(reply: string, answers: VoiceAnswers) {
-  if (!isComplete(answers) && !reply.includes("?")) return true;
+function needsReplyRepair(reply: string, answers: VoiceAnswers, skipped: readonly string[] = []) {
+  if (!isComplete(answers, skipped) && !reply.includes("?")) return true;
   const field = askedField(reply);
   if (!field) return false;
   if (field === "workingFrequency") return true;
   const value = answers[field];
-  return Array.isArray(value) ? value.length > 0 : value !== null && value !== undefined && value !== "";
+  return skipped.includes(field) || (Array.isArray(value) ? value.length > 0 : value !== null && value !== undefined && value !== "");
 }
 
-async function repairReply(reply: string, transcript: string, answers: VoiceAnswers, languageCode: string) {
+async function repairReply(reply: string, transcript: string, answers: VoiceAnswers, languageCode: string, skipped: readonly string[] = []) {
   const response = await groq({
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -466,9 +468,9 @@ async function repairReply(reply: string, transcript: string, answers: VoiceAnsw
       messages: [
         {
           role: "system",
-          content: `Rewrite the draft as Tara, a warm, concise onboarding coach, entirely in ${languageDirections[languageCode] ?? languageCode}. The normalized answers are authoritative. Briefly acknowledge what the user just meant, then ask exactly one natural, context-aware question for a genuinely missing answer. Never ask how many days per week; preferredDays determines that count. Never ask for an answer already present. If every required answer is present, summarize the plan and tell the user to continue without asking a question. Avoid canned option lists when the user's precise answer has already been understood. Return only the required JSON.`,
+          content: `Rewrite the draft as Tara, a warm, concise onboarding coach, entirely in ${languageDirections[languageCode] ?? languageCode}. The normalized answers are authoritative. Briefly acknowledge what the user just meant, then ask exactly one natural, context-aware question for a genuinely missing answer. Never ask how many days per week; preferredDays determines that count. Never ask for an answer already present or listed in skippedFields. If every required answer is present or skipped, summarize the plan and tell the user to continue without asking a question. Avoid canned option lists when the user's precise answer has already been understood. Return only the required JSON.`,
         },
-        { role: "user", content: JSON.stringify({ spokenAnswer: transcript, normalizedAnswers: answers, draftReply: reply }) },
+        { role: "user", content: JSON.stringify({ spokenAnswer: transcript, normalizedAnswers: answers, skippedFields: skipped, draftReply: reply }) },
       ],
     }),
   });
@@ -483,20 +485,82 @@ async function repairReply(reply: string, transcript: string, answers: VoiceAnsw
   }
 }
 
-function isComplete(answers: VoiceAnswers) {
-  return Boolean(
-    answers.objective && answers.targetDate && answers.preferredDays?.length &&
-    answers.preferredTime && answers.progressStyle,
-  );
+function isComplete(answers: VoiceAnswers, skipped: readonly string[] = []) {
+  return nextQuestionField(answers, skipped) === null;
+}
+
+function nextQuestionField(answers: VoiceAnswers, skipped: readonly string[] = []) {
+  return requiredFields.find((field) => {
+    if (skipped.includes(field)) return false;
+    const value = answers[field];
+    return Array.isArray(value) ? value.length === 0 : value == null || value === "";
+  }) ?? null;
+}
+
+function questionField(reply: string, answers: VoiceAnswers, skipped: readonly string[] = []): VoiceQuestionField | null {
+  const detected = askedField(reply);
+  return detected && !skipped.includes(detected) && requiredFields.includes(detected as VoiceQuestionField)
+    ? detected as VoiceQuestionField
+    : nextQuestionField(answers, skipped);
+}
+
+export async function skipVoiceOnboardingQuestion(input: {
+  answers: VoiceAnswers;
+  skippedFields: VoiceQuestionField[];
+  languageCode: string;
+}) {
+  const languageCode = normalizedLanguage(input.languageCode);
+  const nextField = nextQuestionField(input.answers, input.skippedFields);
+  const response = await groq({
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "openai/gpt-oss-120b",
+      temperature: 0.2,
+      max_completion_tokens: 180,
+      reasoning_effort: "low",
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "voice_skip_reply",
+          strict: true,
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            properties: { reply: { type: "string" } },
+            required: ["reply"],
+          },
+        },
+      },
+      messages: [{
+        role: "system",
+        content: `Reply as Tara, a warm concise onboarding coach, entirely in ${languageDirections[languageCode] ?? languageCode}. The user skipped one question. ${nextField ? `Briefly accept that and ask one natural question for ${nextField}.` : "Say the voice questions are done and ask them to continue to review, where they can type the skipped answers."} Return only the required JSON.`,
+      }],
+    }),
+  });
+  const chat = chatResponseSchema.parse(await response.json());
+  const content = chat.choices[0]!.message.content;
+  const reply = correctedReplySchema.parse(JSON.parse(content.slice(content.indexOf("{"), content.lastIndexOf("}") + 1))).reply;
+  return {
+    transcript: "",
+    reply,
+    languageCode,
+    audioBase64: await speak(reply, languageCode),
+    audioMimeType: "audio/wav" as const,
+    answers: input.answers,
+    questionField: nextField,
+    complete: nextField === null,
+  };
 }
 
 export async function voiceOnboardingTurn(
-  input: { audioBase64: string; mimeType: string; answers: VoiceAnswers },
+  input: { audioBase64: string; mimeType: string; answers: VoiceAnswers; skippedFields?: VoiceQuestionField[] },
   onProgress?: (event: VoiceOnboardingEvent) => void,
   onAudioChunk?: (audioBase64: string) => void,
 ) {
   const speech = await transcribe(input.audioBase64, input.mimeType);
   const languageCode = transcriptLanguage(speech.transcript, speech.language_code);
+  const skippedFields = input.skippedFields ?? [];
   const currentAnswers = inferDirectAnswers(input.answers, speech.transcript);
   onProgress?.({ type: "transcript", transcript: speech.transcript, languageCode });
   const response = await groq({
@@ -546,18 +610,18 @@ export async function voiceOnboardingTurn(
       messages: [
         {
           role: "system",
-          content: `You are Tara, GoalSpring's warm, friendly voice onboarding coach. Today is ${new Date().toISOString().slice(0, 10)}. Respond to the meaning of the user's answer, not to keywords or a fixed questionnaire. Sound like a supportive friend: upbeat, conversational, lightly playful when natural, and never robotic. Briefly acknowledge the specific answer, then ask exactly one clear, context-aware question for whichever missing detail would be most useful next; do not follow a fixed question order. HARD LANGUAGE RULE: the reply field must be entirely in ${languageDirections[languageCode] ?? languageCode}. The current spokenAnswer alone controls the reply language. Text inside currentAnswers is stored data and must never influence the reply language. Never copy another language or script from earlier answers. The user's account name is already supplied in currentAnswers: never ask for it. Treat every non-null field in currentAnswers as confirmed and never ask for it again. A goal may contain several linked outcomes, such as creating an app and publishing it; preserve the complete intended outcome. Preserve precise clock times as 24-hour HH:mm: 11am is 11:00 and 2:30pm is 14:30. For broad answers only, use 08:00 for morning, 14:00 for afternoon, 19:00 for evening, 21:00 for night, or Flexible for no preference. Never make the user repeat a precise clock time as a broad time of day. Ask for specific preferredDays, but never ask how many days or times per week because workingFrequency is derived from those selected days. Resolve relative dates from today's date. Extract every detail the user states or clearly implies, even if one answer fills multiple fields. Required plan details are objective, targetDate, preferredDays, preferredTime, and progressStyle; constraints are optional. When all required details are present, give a friendly, concise summary with a small celebratory touch and tell the user to continue. Never claim anything is saved. Return ONLY valid JSON with this exact shape: {"reply":"...","answers":{"name":string|null,"objective":string|null,"targetDate":"YYYY-MM-DD"|null,"preferredDays":["Mon"|"Tue"|"Wed"|"Thu"|"Fri"|"Sat"|"Sun"]|null,"preferredTime":"HH:mm"|"Flexible"|null,"workingFrequency":integer_1_to_7|null,"progressStyle":"Gentle"|"Balanced"|"Detailed"|null,"constraints":string|null}}. Preserve supplied answers unless the user explicitly changes them.`,
+          content: `You are Tara, GoalSpring's warm, friendly voice onboarding coach. Today is ${new Date().toISOString().slice(0, 10)}. Respond to the meaning of the user's answer, not to keywords or a fixed questionnaire. Sound like a supportive friend: upbeat, conversational, lightly playful when natural, and never robotic. Briefly acknowledge the specific answer, then ask exactly one clear, context-aware question for whichever missing detail would be most useful next; do not follow a fixed question order. HARD LANGUAGE RULE: the reply field must be entirely in ${languageDirections[languageCode] ?? languageCode}. The current spokenAnswer alone controls the reply language. Text inside currentAnswers is stored data and must never influence the reply language. Never copy another language or script from earlier answers. The user's account name is already supplied in currentAnswers: never ask for it. Treat every non-null field in currentAnswers as confirmed and never ask for it again. Never ask for a field listed in skippedFields; the user will type those during review. A goal may contain several linked outcomes, such as creating an app and publishing it; preserve the complete intended outcome. Preserve precise clock times as 24-hour HH:mm: 11am is 11:00 and 2:30pm is 14:30. For broad answers only, use 08:00 for morning, 14:00 for afternoon, 19:00 for evening, 21:00 for night, or Flexible for no preference. Never make the user repeat a precise clock time as a broad time of day. Ask for specific preferredDays, but never ask how many days or times per week because workingFrequency is derived from those selected days. Resolve relative dates from today's date. Extract every detail the user states or clearly implies, even if one answer fills multiple fields. Required plan details are objective, targetDate, preferredDays, preferredTime, and progressStyle; constraints are optional. When all required details are present or skipped, give a friendly, concise summary with a small celebratory touch and tell the user to continue. Never claim anything is saved. Return ONLY valid JSON with this exact shape: {"reply":"...","answers":{"name":string|null,"objective":string|null,"targetDate":"YYYY-MM-DD"|null,"preferredDays":["Mon"|"Tue"|"Wed"|"Thu"|"Fri"|"Sat"|"Sun"]|null,"preferredTime":"HH:mm"|"Flexible"|null,"workingFrequency":integer_1_to_7|null,"progressStyle":"Gentle"|"Balanced"|"Detailed"|null,"constraints":string|null}}. Preserve supplied answers unless the user explicitly changes them.`,
         },
-        { role: "user", content: JSON.stringify({ currentAnswers, spokenAnswer: speech.transcript }) },
+        { role: "user", content: JSON.stringify({ currentAnswers, skippedFields, spokenAnswer: speech.transcript }) },
       ],
     }),
   });
   const chat = chatResponseSchema.parse(await response.json());
   const assistant = parsedAssistant(chat.choices[0]!.message.content);
   const answers = mergeAnswers(currentAnswers, assistant.answers);
-  const complete = isComplete(answers);
-  const draftReply = needsReplyRepair(assistant.reply, answers)
-    ? await repairReply(assistant.reply, speech.transcript, answers, languageCode)
+  const complete = isComplete(answers, skippedFields);
+  const draftReply = needsReplyRepair(assistant.reply, answers, skippedFields)
+    ? await repairReply(assistant.reply, speech.transcript, answers, languageCode, skippedFields)
     : assistant.reply;
   const reply = replyMatchesLanguage(draftReply, languageCode)
     ? draftReply
@@ -572,6 +636,7 @@ export async function voiceOnboardingTurn(
       audioBase64: "",
       audioMimeType: "audio/mpeg" as const,
       answers,
+      questionField: complete ? null : questionField(reply, answers, skippedFields),
       complete,
     };
   }
@@ -582,6 +647,7 @@ export async function voiceOnboardingTurn(
     audioBase64: await speak(reply, languageCode),
     audioMimeType: "audio/wav" as const,
     answers,
+    questionField: complete ? null : questionField(reply, answers, skippedFields),
     complete,
   };
 }

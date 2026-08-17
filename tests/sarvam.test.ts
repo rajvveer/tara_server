@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { startVoiceOnboarding, voiceOnboardingTurn } from "../src/sarvam.js";
+import { skipVoiceOnboardingQuestion, startVoiceOnboarding, voiceOnboardingTurn } from "../src/sarvam.js";
 
 const json = (value: unknown) => new Response(JSON.stringify(value), {
   status: 200,
@@ -15,6 +15,27 @@ const wav = () => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("voice onboarding providers", () => {
+  it("moves past a skipped question and leaves it for review", async () => {
+    const mockedFetch = vi.fn()
+      .mockResolvedValueOnce(json({
+        choices: [{ message: { content: JSON.stringify({
+          reply: "No problem. Which days work best for you?",
+        }) } }],
+      }))
+      .mockResolvedValueOnce(json({ audios: ["UklGRg=="] }));
+    vi.stubGlobal("fetch", mockedFetch);
+
+    const result = await skipVoiceOnboardingQuestion({
+      answers: { objective: "Run a 5K" },
+      skippedFields: ["targetDate"],
+      languageCode: "en-IN",
+    });
+
+    expect(result.questionField).toBe("preferredDays");
+    expect(result.answers.targetDate).toBeUndefined();
+    expect(result.complete).toBe(false);
+  });
+
   it("detects Hindi, merges a complete plan, and synthesizes the same-language reply", async () => {
     const targetDate = new Date(Date.now() + 365 * 86_400_000).toISOString().slice(0, 10);
     const mockedFetch = vi.fn()

@@ -103,6 +103,7 @@ export const onboardingSchema = z.object({
 });
 
 const voiceDay = z.enum(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]);
+export const voiceQuestionField = z.enum(["objective", "targetDate", "preferredDays", "preferredTime", "progressStyle"]);
 export const voiceAnswersSchema = z.object({
   name: z.string().trim().min(1).max(80).nullable().optional(),
   objective: z.string().trim().min(3).max(120).nullable().optional(),
@@ -123,6 +124,13 @@ export const voiceTurnSchema = z.object({
   audioBase64: z.string().min(128).max(1_200_000).regex(/^[A-Za-z0-9+/]+={0,2}$/),
   mimeType: z.literal("audio/wav"),
   answers: voiceAnswersSchema.default({}),
+  skippedFields: z.array(voiceQuestionField).max(5).default([]),
+}).strict();
+
+export const voiceSkipSchema = z.object({
+  answers: voiceAnswersSchema.default({}),
+  skippedFields: z.array(voiceQuestionField).max(5),
+  languageCode: z.string().trim().min(2).max(35).default("en-IN"),
 }).strict();
 
 const goalFields = z.object({
