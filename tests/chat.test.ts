@@ -279,6 +279,32 @@ describe("personalized coach", () => {
     expect(retryBody.max_completion_tokens).toBe(900);
   });
 
+  it("asks for a preferred time before creating a goal", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response([
+      'data: {"choices":[{"delta":{"content":"What time works best for this goal—such as 7:00 AM, evening, or flexible?"}}]}',
+      "",
+      "data: [DONE]",
+      "",
+    ].join("\n"), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const reply = await streamCoachReply("user-1", {
+      message: "I want to lose weight in 3 weeks",
+      history: [
+        { role: "user", content: "Create a new goal" },
+        { role: "assistant", content: "What goal would you like to create?" },
+      ],
+    }, () => undefined);
+
+    expect(reply).toContain("What time works best");
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    expect(body.tools.map((tool: { function: { name: string } }) => tool.function.name)).not.toContain("create_goal");
+    expect(body.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "system", content: expect.stringContaining("preferred working time") }),
+    ]));
+    expect(mocks.executeTool).not.toHaveBeenCalled();
+  });
+
   it("executes a confirmed goal creation instead of asking again", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response([
@@ -296,7 +322,7 @@ describe("personalized coach", () => {
     const reply = await streamCoachReply("user-1", {
       message: "Yes",
       history: [
-        { role: "user", content: "I want to lose weight in 3 weeks" },
+        { role: "user", content: "I want to lose weight in 3 weeks, every morning at 7 AM" },
         { role: "assistant", content: "Shall I go ahead and create this health goal?" },
       ],
     }, () => undefined);
