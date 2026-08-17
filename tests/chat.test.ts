@@ -9,14 +9,10 @@ vi.mock("../src/db.js", () => ({
   prisma: { user: { findUnique: mocks.findUnique } },
 }));
 vi.mock("../src/coach-tools.js", () => ({
-  coachTools: [{
+  coachTools: ["update_task", "create_goal"].map((name) => ({
     type: "function",
-    function: {
-      name: "update_task",
-      description: "Update a task",
-      parameters: { type: "object", properties: {} },
-    },
-  }],
+    function: { name, description: `${name} tool`, parameters: { type: "object", properties: {} } },
+  })),
   executeCoachTool: mocks.executeTool,
 }));
 
@@ -257,6 +253,42 @@ describe("personalized coach", () => {
     const retryBody = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body));
     expect(firstBody.max_completion_tokens).toBe(700);
     expect(retryBody.max_completion_tokens).toBe(1_400);
+  });
+
+  it("executes a confirmed goal creation instead of asking again", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response([
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-goal","function":{"name":"create_goal","arguments":"{\\"title\\":\\"Lose weight in 3 weeks\\",\\"category\\":\\"HEALTH\\",\\"targetDate\\":\\"2026-09-07T00:00:00.000Z\\"}"}}]}}]}',
+        "",
+        "data: [DONE]",
+        "",
+      ].join("\n"), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    mocks.executeTool.mockResolvedValue({
+      content: { goal: { title: "Lose weight in 3 weeks", status: "ACTIVE" } },
+      changed: true,
+    });
+
+    const reply = await streamCoachReply("user-1", {
+      message: "Yes",
+      history: [
+        { role: "user", content: "I want to lose weight in 3 weeks" },
+        { role: "assistant", content: "Shall I go ahead and create this health goal?" },
+      ],
+    }, () => undefined);
+
+    expect(reply).toBe("Your new goal “Lose weight in 3 weeks” is ready.");
+    expect(mocks.executeTool).toHaveBeenCalledWith(
+      "user-1",
+      "create_goal",
+      expect.stringContaining("Lose weight in 3 weeks"),
+      expect.stringContaining("create this health goal?\nYes"),
+      "Asia/Kolkata",
+    );
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    expect(body.tool_choice).toBe("required");
+    expect(body.tools.map((tool: { function: { name: string } }) => tool.function.name)).toEqual(["create_goal"]);
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it("executes streamed tool calls and reports data changes", async () => {
