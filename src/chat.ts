@@ -30,6 +30,12 @@ function confirmedGoalCreation(input: ChatTurn) {
     : null;
 }
 
+function wantsEnglishTaskList(message: string) {
+  return /\b(?:show|list|display|what(?:'s| is| are)?|which)\b[\s\S]*\b(?:tasks?|actions?|schedule)\b|\b(?:upcoming|due)\s+(?:tasks?|actions?)\b/iu.test(message)
+    && !/[\u0900-\u097f]|\b(?:kal|aaj|kya|kaun|dikhao|batao|karo|mere|meri|mujhe)\b/iu.test(message)
+    && !/\b(?:create|add|make|change|update|rename|move|reschedule|mark|complete|reopen|start|skip|pause|resume|delete|remove)\b/iu.test(message);
+}
+
 function naturalClock(value: unknown) {
   const match = /^(\d{2}):(\d{2})$/.exec(String(value));
   if (!match) return String(value);
@@ -370,6 +376,7 @@ Use the supplied tools whenever the user asks to view or change goals, tasks, pr
   ];
 
   const confirmedGoal = confirmedGoalCreation(input);
+  const directEnglishTaskList = wantsEnglishTaskList(input.message);
   let conversation = messages;
   let availableTools: readonly CoachTool[] | null = confirmedGoal
     ? coachTools.filter((tool) => tool.function.name === "create_goal")
@@ -421,6 +428,11 @@ Use the supplied tools whenever the user asks to view or change goals, tasks, pr
     }
 
     if (confirmedGoal && roundExecutions.some((execution) => execution.changed)) {
+      const reply = fallbackToolReply(executions);
+      onDelta(reply);
+      return reply;
+    }
+    if (directEnglishTaskList && roundExecutions.every((execution) => execution.name === "list_tasks")) {
       const reply = fallbackToolReply(executions);
       onDelta(reply);
       return reply;

@@ -9,7 +9,7 @@ vi.mock("../src/db.js", () => ({
   prisma: { user: { findUnique: mocks.findUnique } },
 }));
 vi.mock("../src/coach-tools.js", () => ({
-  coachTools: ["update_task", "create_goal"].map((name) => ({
+  coachTools: ["update_task", "create_goal", "list_tasks"].map((name) => ({
     type: "function",
     function: { name, description: `${name} tool`, parameters: { type: "object", properties: {} } },
   })),
@@ -288,6 +288,38 @@ describe("personalized coach", () => {
     const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
     expect(body.tool_choice).toBe("required");
     expect(body.tools.map((tool: { function: { name: string } }) => tool.function.name)).toEqual(["create_goal"]);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a clear English task-list answer in English", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response([
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-list","function":{"name":"list_tasks","arguments":"{\\"scope\\":\\"ALL\\",\\"status\\":\\"OPEN\\"}"}}]}}]}',
+      "",
+      "data: [DONE]",
+      "",
+    ].join("\n"), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    mocks.executeTool.mockResolvedValue({
+      content: {
+        tasks: [
+          { title: "Set up Apple Developer account", scheduleLabel: "tomorrow at 11:00 AM" },
+          { title: "Initialize the Xcode project", scheduleLabel: "Wednesday at 11:00 AM" },
+        ],
+        hasMore: false,
+      },
+      changed: false,
+    });
+    const deltas: string[] = [];
+
+    const reply = await streamCoachReply("user-1", {
+      message: "Show my upcoming tasks",
+      history: [],
+    }, (text) => deltas.push(text));
+
+    expect(reply).toContain("Here are your next tasks:");
+    expect(reply).toContain("tomorrow at 11:00 AM");
+    expect(reply).not.toMatch(/[\u0900-\u097f]|\b(?:kal|baje|karo)\b/iu);
+    expect(deltas).toEqual([reply]);
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
