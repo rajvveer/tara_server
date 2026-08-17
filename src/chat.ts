@@ -78,6 +78,21 @@ function wantsEnglishTaskList(message: string) {
     && !/\b(?:create|add|make|change|update|rename|move|reschedule|mark|complete|reopen|start|skip|pause|resume|delete|remove)\b/iu.test(message);
 }
 
+const indicLetters = /[\p{Script=Devanagari}\p{Script=Bengali}\p{Script=Gurmukhi}\p{Script=Gujarati}\p{Script=Oriya}\p{Script=Tamil}\p{Script=Telugu}\p{Script=Kannada}\p{Script=Malayalam}]/gu;
+const latinLetters = /\p{Script=Latin}/gu;
+
+function clearlyEnglish(message: string) {
+  return (message.match(latinLetters)?.length ?? 0) > 0
+    && (message.match(indicLetters)?.length ?? 0) === 0
+    && !/\b(?:aaj|abhi|kal|kya|kaun|dikhao|batao|karo|mere|meri|mujhe|chahiye|subah|shaam|raat|baje)\b/iu.test(message);
+}
+
+function mostlyIndic(reply: string) {
+  const indic = reply.match(indicLetters)?.length ?? 0;
+  const latin = reply.match(latinLetters)?.length ?? 0;
+  return indic >= 12 && indic >= latin;
+}
+
 function naturalClock(value: unknown) {
   const match = /^(\d{2}):(\d{2})$/.exec(String(value));
   if (!match) return String(value);
@@ -284,6 +299,21 @@ async function streamCompletion(
   return { reply, toolCalls };
 }
 
+async function enforceReplyLanguage(message: string, draft: string) {
+  if (!clearlyEnglish(message) || !mostlyIndic(draft)) return draft;
+  const corrected = await streamCompletion([
+    {
+      role: "system",
+      content: "Rewrite the supplied coach reply entirely in English using Latin script. Preserve every fact, date, time, task title, and Markdown structure. Do not add advice or commentary; output only the rewritten reply.",
+    },
+    { role: "user", content: draft },
+  ], () => undefined, null, 0);
+  const reply = corrected.reply.trim();
+  return reply && !mostlyIndic(reply)
+    ? reply
+    : "I’m sorry, I couldn’t prepare that response in English. Please try again.";
+}
+
 export async function streamCoachReply(
   userId: string,
   input: ChatTurn,
@@ -426,6 +456,10 @@ Use the supplied tools whenever the user asks to view or change goals, tasks, pr
       role: "system",
       content: "The user is creating a goal but has not supplied a preferred working time. Ask one focused question for a clock time, morning/afternoon/evening/night, or flexible. Do not create the goal or ask for final confirmation yet.",
     }] : []),
+    ...(clearlyEnglish(input.message) ? [{
+      role: "system",
+      content: "HARD CURRENT-TURN LANGUAGE RULE: The user's latest message is English. Reply only in English using Latin script, regardless of the user's name, timezone, saved plan text, or earlier conversation language.",
+    }] : []),
     { role: "user", content: input.message },
   ];
 
@@ -442,8 +476,9 @@ Use the supplied tools whenever the user asks to view or change goals, tasks, pr
   for (let round = 0; round < 4; round += 1) {
     const completion = await streamCompletion(conversation, () => undefined, availableTools, 1, requireTool);
     if (!completion.toolCalls.length) {
-      const reply = completion.reply.trim() || (executions.length ? fallbackToolReply(executions) : "");
-      if (!reply) throw new ApiError(502, "AI_PROVIDER_ERROR", "Tara returned an empty reply. Please try again.");
+      const draft = completion.reply.trim() || (executions.length ? fallbackToolReply(executions) : "");
+      if (!draft) throw new ApiError(502, "AI_PROVIDER_ERROR", "Tara returned an empty reply. Please try again.");
+      const reply = await enforceReplyLanguage(input.message, draft);
       onDelta(reply);
       return reply;
     }

@@ -120,7 +120,7 @@ describe("personalized coach", () => {
     await streamCoachReply("user-1", { message: "Continue", history }, () => undefined);
 
     const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
-    const suppliedHistory = body.messages.slice(1, -1);
+    const suppliedHistory = body.messages.slice(1, -1).filter((message: { role: string }) => message.role !== "system");
     expect(suppliedHistory).toHaveLength(4);
     expect(suppliedHistory.every((message: { content: string }) => message.content.length === 600)).toBe(true);
   });
@@ -389,6 +389,44 @@ describe("personalized coach", () => {
     expect(reply).not.toMatch(/[\u0900-\u097f]|\b(?:kal|baje|karo)\b/iu);
     expect(deltas).toEqual([reply]);
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("corrects a Hindi plan when the latest message is English", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response([
+        'data: {"choices":[{"delta":{"content":"इस हफ्ते के मुख्य कार्य: सोमवार को ऐप बनाना और वजन घटाना। बुधवार को नया प्रोजेक्ट बनाना।"}}]}',
+        "",
+        "data: [DONE]",
+        "",
+      ].join("\n"), { status: 200 }))
+      .mockResolvedValueOnce(new Response([
+        'data: {"choices":[{"delta":{"content":"This week, build the app on Monday and focus on weight loss. Create the new project on Wednesday."}}]}',
+        "",
+        "data: [DONE]",
+        "",
+      ].join("\n"), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const deltas: string[] = [];
+
+    const reply = await streamCoachReply("user-1", {
+      message: "Help me plan this week",
+      history: [
+        { role: "user", content: "कल मुझे क्या करना है?" },
+        { role: "assistant", content: "कल सुबह अपना पहला काम करें।" },
+      ],
+    }, (text) => deltas.push(text));
+
+    expect(reply).toBe("This week, build the app on Monday and focus on weight loss. Create the new project on Wednesday.");
+    expect(reply).not.toMatch(/[\u0900-\u097f]/u);
+    expect(deltas).toEqual([reply]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const firstBody = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    expect(firstBody.messages.at(-2)).toEqual(expect.objectContaining({
+      role: "system",
+      content: expect.stringContaining("latest message is English"),
+    }));
+    const correctionBody = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body));
+    expect(correctionBody.messages[0].content).toContain("Rewrite the supplied coach reply entirely in English");
   });
 
   it("executes streamed tool calls and reports data changes", async () => {
