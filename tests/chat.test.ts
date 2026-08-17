@@ -121,8 +121,8 @@ describe("personalized coach", () => {
 
     const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
     const suppliedHistory = body.messages.slice(1, -1);
-    expect(suppliedHistory).toHaveLength(6);
-    expect(suppliedHistory.every((message: { content: string }) => message.content.length === 1_000)).toBe(true);
+    expect(suppliedHistory).toHaveLength(4);
+    expect(suppliedHistory.every((message: { content: string }) => message.content.length === 600)).toBe(true);
   });
 
   it("answers a direct next-action question from the saved schedule without the provider", async () => {
@@ -196,9 +196,10 @@ describe("personalized coach", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("retries a short provider rate limit instead of failing the chat", async () => {
+  it("honors retry-after before retrying a provider rate limit", async () => {
+    vi.useFakeTimers();
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(null, { status: 429, headers: { "retry-after": "0" } }))
+      .mockResolvedValueOnce(new Response(null, { status: 429, headers: { "retry-after": "2" } }))
       .mockResolvedValueOnce(new Response([
         'data: {"choices":[{"delta":{"content":"Ready when you are."}}]}',
         "",
@@ -207,10 +208,33 @@ describe("personalized coach", () => {
       ].join("\n"), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(streamCoachReply("user-1", {
+    const reply = streamCoachReply("user-1", {
       message: "What should I do next?",
       history: [],
-    }, () => undefined)).resolves.toBe("Ready when you are.");
+    }, () => undefined);
+    await Promise.resolve();
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(reply).resolves.toBe("Ready when you are.");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("queues provider requests instead of starting them simultaneously", async () => {
+    let releaseFirst!: (response: Response) => void;
+    const success = () => new Response('data: {"choices":[{"delta":{"content":"Ready."}}]}\n\ndata: [DONE]\n\n', { status: 200 });
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => { releaseFirst = resolve; }))
+      .mockResolvedValueOnce(success());
+    vi.stubGlobal("fetch", fetchMock);
+
+    const first = streamCoachReply("user-1", { message: "Help me plan today", history: [] }, () => undefined);
+    const second = streamCoachReply("user-2", { message: "Help me plan tomorrow", history: [] }, () => undefined);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    releaseFirst(success());
+
+    await expect(Promise.all([first, second])).resolves.toEqual(["Ready.", "Ready."]);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
@@ -251,8 +275,8 @@ describe("personalized coach", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const firstBody = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
     const retryBody = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body));
-    expect(firstBody.max_completion_tokens).toBe(700);
-    expect(retryBody.max_completion_tokens).toBe(1_400);
+    expect(firstBody.max_completion_tokens).toBe(600);
+    expect(retryBody.max_completion_tokens).toBe(900);
   });
 
   it("executes a confirmed goal creation instead of asking again", async () => {
